@@ -17,7 +17,7 @@
   
   Distributed as-is; no warranty is given.
 ******************************************************************************/
-#include <ArduinoBLE.h>
+#include <bluefruit.h>
 #include "ifx007t.h"
  
 Ifx007t mot1;
@@ -35,10 +35,12 @@ const long interval = 100;
 unsigned long previousMillis = 0;
 unsigned long currentMillis;
 
-BLEService lofiService("0000ffe0-0000-1000-8000-00805f9b34fb"); // BLE LOFI Service UUID of HM-10
+int central=false;
+
+BLEService lofiService = BLEService(0xFFE0); // BLE LOFI Service UUID of HM-10
 
 // BLE Serial Characteristic - custom 128-bit UUID of HM-10, read and writable by central
-BLECharacteristic serialCharacteristic("0000ffe1-0000-1000-8000-00805f9b34fb", BLERead | BLEWriteWithoutResponse | BLENotify, 20);
+BLECharacteristic serialCharacteristic = BLECharacteristic(0xFFE1);
 
 const int ledPin = LED_BUILTIN; // pin to use for the LED
 
@@ -49,14 +51,28 @@ void setup() {
   // set LED pin to output mode
   pinMode(ledPin, OUTPUT);
 
-  // begin initialization
-  if (!BLE.begin()) {
-    Serial.println("starting BLE failed!");
+  // Initialise the Bluefruit module
+  Serial.println("Initialise the Bluefruit nRF52 module");
+  Bluefruit.begin();
 
-    while (1);
-  }
+  // Set the advertised device name (keep it short!)
+  Serial.println("Setting Device Name to 'LOFI-Robot'");
+  Bluefruit.setName("LOFI-Robot");
 
-  // set advertised local name and service UUID:
+  // Set the connect/disconnect callback handlers
+      Bluefruit.Periph.setConnectCallback(connect_callback);
+      Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
+
+  // Setup the Custom service using
+  Serial.println("Configuring the Custom Service");
+  setupService();
+
+  // Setup the advertising packet(s)
+  Serial.println("Setting up the advertising payload(s)");
+  startAdv();
+
+  Serial.println("\nAdvertising");
+/*  // set advertised local name and service UUID:
   BLE.setLocalName("LOFI-Robot");   // use custom name, will be displayed in app
   BLE.setDeviceName("HMsoft-38A3"); // device name is necessary that LOFI control recognizes device
   BLE.setAdvertisedService(lofiService);
@@ -71,11 +87,65 @@ void setup() {
   BLE.advertise();
 
   Serial.println("BLE Serial Peripheral");
-  mot1.begin(MOT1_1,MOT1_2,MOT1_EN);    // configure motors
-  mot2.begin(MOT2_1,MOT2_2,MOT2_EN);
-  Serial.println("Motor configured");
-  mot1.stop();    // stop motor after configuration
-  mot2.stop();
+*/
+//  mot1.begin(MOT1_1,MOT1_2,MOT1_EN);    // configure motors
+//  mot2.begin(MOT2_1,MOT2_2,MOT2_EN);
+//  Serial.println("Motor configured");
+//  mot1.stop();    // stop motor after configuration
+//  mot2.stop();
+}
+
+void startAdv(void)
+{
+  // Advertising packet
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+  Bluefruit.Advertising.addTxPower();
+
+  // Include Service UUID
+  Bluefruit.Advertising.addService(lofiService);
+
+  // Include Name
+//      Bluefruit.Advertising.addName();
+  Bluefruit.ScanResponse.addName();
+ 
+  // Start Advertising
+  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.setInterval(32, 244);    // in unit of 0.625 ms
+  Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
+  Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds 
+}
+
+void setupService(void)
+{
+  lofiService.begin();
+  serialCharacteristic.setProperties(CHR_PROPS_READ|CHR_PROPS_WRITE_WO_RESP|CHR_PROPS_NOTIFY);
+  serialCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  serialCharacteristic.setFixedLen(2);
+//  serialCharacteristic.setCccdWriteCallback(cccd_callback);  // Optionally capture CCCD updates
+  serialCharacteristic.begin();
+  uint8_t hrmdata[2] = { 0b00000110, 0x40 }; // Set the characteristic to use 8-bit values, with the sensor connected and detected
+  serialCharacteristic.write(hrmdata, 2);
+}
+void connect_callback(uint16_t conn_handle)
+{
+  // Get the reference to current connection
+  BLEConnection* connection = Bluefruit.Connection(conn_handle);
+
+  char central_name[32] = { 0 };
+  connection->getPeerName(central_name, sizeof(central_name));
+
+  Serial.print("Connected to ");
+  Serial.println(central_name);
+  central=true;
+}
+void disconnect_callback(uint16_t conn_handle, uint8_t reason)
+{
+  (void) conn_handle;
+  (void) reason;
+
+  Serial.print("Disconnected, reason = 0x"); Serial.println(reason, HEX);
+  Serial.println("Advertising!");
+  central=false;
 }
 
 void loop() {
@@ -83,26 +153,27 @@ void loop() {
   char prev_byte=0,current_byte=0;
   int receive_length=0;
   // listen for BLE peripherals to connect:
-  BLEDevice central = BLE.central();
+//  BLEDevice central = BLE.central();
 
   // if a central is connected to peripheral:
   if (central) {
     Serial.print("Connected to central: ");
     // print the central's MAC address:
-    Serial.println(central.address());
+//    Serial.println(central.address());
 
     // while the central is still connected to peripheral:
-    while (central.connected()) {
+//    while (central.connected()) {
+    while (central) {
 
 // transfer data regularly to the app
       currentMillis = millis();
 
       if (currentMillis - previousMillis >= interval) {
         previousMillis = currentMillis;
-        sending();
+//        sending();
       } 
 // receive data
-      if (serialCharacteristic.written()) {   // check if data was sent by app
+/*      if (serialCharacteristic.written()) {   // check if data was sent by app
         receive_length=serialCharacteristic.readValue(received,20);  // get received string
         Serial.print((char*)received);     // print string to serial
         Serial.print("  ");
@@ -122,13 +193,13 @@ void loop() {
         }
         Serial.println("");
       }
-    }
+*/    }
     mot1.stop();    // stop motors when central disconnects
     mot2.stop();
 
     // when the central disconnects, print it out:
     Serial.print(F("Disconnected from central: "));
-    Serial.println(central.address());
+//    Serial.println(central.address());
   }
 }
 
@@ -210,5 +281,5 @@ void sending() {
   // last byte "i" character as a delimiter for BT2.0 on Android
   sendstring[10]=105;
 
-  serialCharacteristic.writeValue((const uint8_t*)sendstring,11);
+//  serialCharacteristic.writeValue((const uint8_t*)sendstring,11);
 }
